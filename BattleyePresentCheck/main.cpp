@@ -87,6 +87,52 @@ bool find_memory_anomaly(uintptr_t present) {
 
 int main() {
 	bool reported = false;
+
+	//General report
+	{
+
+		uintptr_t base = (uintptr_t)GetModuleHandleA("dxgi.dll");
+		if (base) {
+			PIMAGE_DOS_HEADER dos = (PIMAGE_DOS_HEADER)base;
+			PIMAGE_NT_HEADERS nt = (PIMAGE_NT_HEADERS)(base + dos->e_lfanew);
+			DWORD code_base = nt->OptionalHeader.BaseOfCode;
+			DWORD code_size = nt->OptionalHeader.SizeOfCode;
+			uintptr_t code_start = code_base + base;
+			uintptr_t sig_base = utils::scanpattern(code_start, code_size, "48 C7 40 B8 FE FF FF FF 48 89 58 18");
+			if (sig_base) {
+				uintptr_t swap_chain = sig_base + *(signed int*)(sig_base + 0x25) + 0x29;
+				uintptr_t present = *(uintptr_t*)(swap_chain + 0x40);
+				MEMORY_BASIC_INFORMATION mbi_globalchain = { 0 };
+				NTSTATUS globalchainstatus = NtQueryVirtualMemory((HANDLE)-1, (PVOID)swap_chain, MemoryBasicInformation, (PVOID)&mbi_globalchain, sizeof(mbi_globalchain), 0);
+				if (globalchainstatus || func_anomaly(present)) {
+					reported = true;
+					printf("[!!!] Anomaly at: %p\n", present);
+				}
+
+				else
+				{
+					printf("[>] No anomalys found jump chain ends at %p\n", present);
+					printf("[>] Verifying memory!\n");
+					if (find_memory_anomaly(present)) {
+						printf("[!!!] Memory anomaly at destination!\n");
+						reported = true;
+					}
+
+				}
+				printf("==GENERAL REPORT==\n");
+				printf("Report: %x %x\n", 0x47, 0x1);
+				printf("Present: %p\n", present);
+				printf("First 32 bytes...\n");
+				printf("Allocation base: %p\n", mbi_globalchain.AllocationBase);
+				printf("Base address: %p\n", mbi_globalchain.BaseAddress);
+			}
+
+		
+		}
+
+	}
+	
+	//Module specific detections
 	int idx = 0;
 	for (auto pair : modules) {
 		if (uintptr_t base = (uintptr_t)GetModuleHandleA(pair.first.c_str())) {
@@ -109,8 +155,6 @@ int main() {
 				}
 
 			}
-		
-
 			else if (idx == 1) { //DiscordHook64.dll
 				uintptr_t jmp_dst = sig_base - 0x13;
 				if (*(BYTE*)jmp_dst == 0xE8 &&
@@ -137,7 +181,7 @@ int main() {
 			}
 			if (present_pointer  && *present_pointer) {
 
-				static MEMORY_BASIC_INFORMATION mbi = { 0 };
+				MEMORY_BASIC_INFORMATION mbi = { 0 };
 				NTSTATUS status = NtQueryVirtualMemory((HANDLE) - 1, *present_pointer, MemoryBasicInformation, (PVOID) & mbi, sizeof(mbi), 0);
 				if (status || mbi.State != MEM_COMMIT || mbi.Type != MEM_PRIVATE || mbi.Protect != PAGE_EXECUTE_READWRITE || *(DWORD*)(*present_pointer) == 0x50C03148) { //xor rax, rax push rax
 					printf("[!!!] Present is invalid memory! %p %p\n", status, &mbi);
@@ -152,7 +196,7 @@ int main() {
 
 				Sleep(1000); //Sleep and hope that present got called once
 				printf("[>] Found SwapChain at %p\n", globalchain);
-				static MEMORY_BASIC_INFORMATION mbi_globalchain = { 0 };
+				MEMORY_BASIC_INFORMATION mbi_globalchain = { 0 };
 				NTSTATUS globalchainstatus = NtQueryVirtualMemory((HANDLE)-1, globalchain, MemoryBasicInformation, (PVOID)&mbi_globalchain, sizeof(mbi_globalchain), 0);
 				uintptr_t present_from_vtable = *(uintptr_t*)(*(uintptr_t*)(globalchain)+0x40);
 				if (globalchainstatus || func_anomaly(present_from_vtable)) {
